@@ -8,6 +8,7 @@ import CSSModules from 'react-css-modules'
 import styles from './Filter.scss'
 
 import FilterLink from './FilterLink/FilterLink'
+import { FormattedMessage } from 'react-intl'
 
 
 const filters = ['All', 'Sent', 'Received']
@@ -16,7 +17,7 @@ const Filter = ({ filter }) => {
 
   const handleChangeFilter = (filter) => {
     actions.filter.setFilter(filter)
-    actions.analytics.dataEvent(`history-click-${filter}`)
+    // actions.analytics.dataEvent(`history-click-${filter}`)
   }
 
   return (
@@ -42,4 +43,3 @@ Filter.propTypes = {
 export default connect(({ history: { filter } }) => ({
   filter,
 }))(CSSModules(Filter, styles))
-

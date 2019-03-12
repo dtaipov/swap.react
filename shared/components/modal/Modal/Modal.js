@@ -49,7 +49,7 @@ export default class Modal extends Component {
     const { name, data, onClose, disableClose } = this.props
 
     if (name === 'OfferModal') {
-      actions.analytics.dataEvent('orderbook-addoffer-click-exit-button')
+      // actions.analytics.dataEvent('orderbook-addoffer-click-exit-button')
     }
 
     if (!disableClose) {
@@ -67,21 +67,23 @@ export default class Modal extends Component {
 
   render() {
     const { className, whiteLogo, showLogo, title, showCloseButton, disableClose, children,
-      titleUppercase, name, shouldCenterHorizontally, shouldCenterVertically } = this.props
+      titleUppercase, name, shouldCenterHorizontally, shouldCenterVertically, styleName, data } = this.props
+
+    window.addEventListener('popstate', function (e) { actions.modals.close(name) }) // eslint-disable-line
 
     const titleStyleName = cx('title', {
       'uppercase': titleUppercase,
     })
 
     return (
-      <Overlay>
+      <Overlay styleName={styleName}>
         <div styleName="modal" className={className}>
           {
             Boolean(title || showCloseButton) && (
               <div styleName="header">
                 <WidthContainer styleName="headerContent">
                   {
-                    showLogo && <Logo colored={!whiteLogo} />
+                    showLogo && <Logo isColored={!whiteLogo} />
                   }
                   <div styleName={titleStyleName} role="title">{title}</div>
                   {

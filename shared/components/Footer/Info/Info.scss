@@ -2,13 +2,12 @@
   font-size: 14px;
   color: #b2b2b2;
   background: #ffffff;
-  width: 28%;
   height: 20px;
   position: fixed;
   bottom: 2%;
   left: 1%;
   z-index: 1049;
-  padding-bottom: 10px;
+  padding-bottom: 25px;
 
   & span {
     font-weight: bold;
@@ -17,6 +16,8 @@
 
   & svg {
     display: block;
+    position: relative;
+    top: 2px;
     height: 3px;
   }
 }

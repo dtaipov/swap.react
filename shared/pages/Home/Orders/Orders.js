@@ -3,10 +3,10 @@ import React, { Component, Fragment } from 'react'
 import { connect } from 'redaction'
 import actions from 'redux/actions'
 import { withRouter } from 'react-router-dom'
-
 import { isMobile } from 'react-device-detect'
 
 import constants from 'helpers/constants'
+import { localisedUrl } from 'helpers/locale'
 
 import cssModules from 'react-css-modules'
 import styles from './Orders.scss'
@@ -16,12 +16,16 @@ import Table from 'components/tables/Table/Table'
 import Title from 'components/PageHeadline/Title/Title'
 import tableStyles from 'components/tables/Table/Table.scss'
 import PageSeo from 'components/Seo/PageSeo'
+import { getSeoPage } from 'helpers/seo'
 
+import CloseIcon from 'components/ui/CloseIcon/CloseIcon'
 import Pair from './Pair'
 import Row from './Row/Row'
-import RowMobile from './RowMobile/RowMobile'
 import MyOrders from './MyOrders/MyOrders'
-import { FormattedMessage } from 'react-intl'
+import { FormattedMessage, injectIntl, defineMessages } from 'react-intl'
+
+import config from 'app-config'
+import { links } from 'helpers'
 
 
 const filterMyOrders = (orders, peer) => orders
@@ -29,21 +33,26 @@ const filterMyOrders = (orders, peer) => orders
 
 const filterOrders = (orders, filter) => orders
   .filter(order => order.isProcessing !== true)
+  .filter(order => order.isHidden !== true)
   .filter(order => Pair.check(order, filter))
   .sort((a, b) => Pair.compareOrders(b, a))
 
 @connect(({
+  rememberedOrders,
   core: { orders, filter },
-  ipfs: { isOnline, peer },
+  ipfs: { isOnline, isAllPeersLoaded, peer },
   currencies: { items: currencies },
 }) => ({
   orders: filterOrders(orders, filter),
   myOrders: filterMyOrders(orders, peer),
   isOnline,
+  isAllPeersLoaded,
   currencies,
+  decline: rememberedOrders.savedOrders,
 }))
 @withRouter
-@cssModules(styles)
+@injectIntl
+@cssModules(styles, { allowMultiple: true })
 export default class Orders extends Component {
 
   state = {
@@ -74,14 +83,20 @@ export default class Orders extends Component {
       buyCurrency,
       sellCurrency,
     })
-    actions.analytics.dataEvent('orderbook-click-createoffer-button')
+    // actions.analytics.dataEvent('orderbook-click-createoffer-button')
   }
 
   removeOrder = (orderId) => {
-    if (confirm('Are your sure ?')) {
-      actions.core.removeOrder(orderId)
-      actions.core.updateCore()
-    }
+    actions.modals.open(constants.modals.Confirm, {
+      onAccept: () => {
+        actions.core.deletedPartialCurrency(orderId)
+        actions.core.removeOrder(orderId)
+        actions.core.updateCore()
+      },
+      message: (
+        <FormattedMessage id="orders94s" defaultMessage="Are you sure you want to delete the order?" />
+      ),
+    })
   }
 
   acceptRequest = (orderId, peer) => {
@@ -94,40 +109,92 @@ export default class Orders extends Component {
     actions.core.updateCore()
   }
 
+  handleWalletPush = () => {
+    this.props.history.push(links.currencyWallet)
+  }
+
   render() {
     const { sellOrders, buyOrders, isVisible } = this.state
-    let { sellCurrency, buyCurrency } = this.props
+    let { sellCurrency, buyCurrency, intl, decline } = this.props
     buyCurrency = buyCurrency.toUpperCase()
     sellCurrency = sellCurrency.toUpperCase()
 
-    const titles = [ 'OWNER', `AMOUNT`, `PRICE FOR 1 ${buyCurrency}`, `TOTAL`, 'START EXCHANGE' ]
-    const { isOnline, myOrders, orderId, invalidPair, location, currencies } = this.props
+    const titles = [
+      <FormattedMessage id="orders101" defaultMessage="OWNER" />,
+      <FormattedMessage id="orders102" defaultMessage="AMOUNT" />,
+      <span>
+        <FormattedMessage id="orders104" defaultMessage="PRICE FOR 1 {buyCurrency}" values={{ buyCurrency: `${buyCurrency}` }} />
+      </span>,
+      <FormattedMessage id="orders105" defaultMessage="TOTAL" />,
+      <FormattedMessage id="orders106" defaultMessage="START EXCHANGE" />,
+    ]
+
+
+    const { isOnline, isAllPeersLoaded, myOrders, orderId, invalidPair, location, currencies } = this.props
+    const isIpfsLoaded = isOnline && isAllPeersLoaded
+    const seoPage = getSeoPage(location.pathname)
+
+    const isWidget = (config && config.isWidget)
+
+    const buttonsRowStyleName = isMobile ?
+      (isWidget) ? 'buttonRow buttonRowMobile buttonRowWidget' : 'buttonRow buttonRowMobile'
+      :
+      (isWidget) ? 'buttonRow buttonRowWidget' : 'buttonRow'
 
     const buyCurrencyFullName = (currencies.find(c => c.name === buyCurrency) || {}).fullTitle
     const sellCurrencyFullName = (currencies.find(c => c.name === sellCurrency) || {}).fullTitle
+    const title = defineMessages({
+      metaTitle: {
+        id: 'Orders121',
+        defaultMessage: 'Atomic Swap {buyCurrencyFullName} ({buyCurrency}) to {sellCurrencyFullName} ({sellCurrency}) Instant Exchange',
+      },
+    })
+    const description = defineMessages({
+      metaDescription: {
+        id: 'Orders127',
+        defaultMessage: `Best exchange rate for {buyCurrencyFullName} ({buyCurrency}) to {sellCurrencyFullName} ({sellCurrency}).
+         Swap.Online wallet provides instant exchange using Atomic Swap Protocol.`,
+      },
+    })
 
     return (
       <Fragment>
         <PageSeo
           location={location}
-          defaultTitle={
-            `Atomic Swap ${buyCurrencyFullName} (${buyCurrency}) to ${sellCurrencyFullName} (${sellCurrency}) Instant Exchange`}
-          defaultDescription={`Best exchange rate for ${buyCurrencyFullName} (${buyCurrency}) to ${sellCurrencyFullName} (${sellCurrency}).
-               Swap.Online wallet provides instant exchange using Atomic Swap Protocol.`
-          } />
-        <Title>{buyCurrency}/{sellCurrency} no limit exchange with 0 fee</Title>
+          defaultTitle={intl.formatMessage(title.metaTitle, { buyCurrency, sellCurrency, buyCurrencyFullName, sellCurrencyFullName })}
+          defaultDescription={intl.formatMessage(description.metaDescription, { buyCurrency, sellCurrency, buyCurrencyFullName, sellCurrencyFullName })} />
+        <div styleName="headerContainer">
+          <Title>
+            <FormattedMessage
+              id="orders1381"
+              defaultMessage="{pair} no limit exchange with 0 fee"
+              values={{ pair: `${buyCurrency}/${sellCurrency}`, buyCurrency, sellCurrency, buyCurrencyFullName, sellCurrencyFullName }}
+            />
+          </Title>
+          <CloseIcon styleName="closeButton" onClick={() => this.props.history.push(localisedUrl(intl.locale, '/'))} data-testid="CloseIcon" />
+        </div>
         { invalidPair &&
-          <FormattedMessage id="Orders117" defaultMessage="No such ticker. Redirecting to SWAP-BTC exchange..." >
-            {message => <p>{message}</p>}
-          </FormattedMessage>
+          <p>
+            <FormattedMessage id="Orders141" defaultMessage="No such ticker. Redirecting to SWAP-BTC exchange..." />
+          </p>
         }
-        <div styleName="buttonRow">
+        <div styleName={buttonsRowStyleName}>
           <Button green styleName="button" disabled={myOrders.length === 0} onClick={() => this.setState(state => ({ isVisible: !state.isVisible }))}>
-            {isVisible ? 'Hide' : 'Show'} my Orders
+            {isVisible ?
+              <FormattedMessage id="orders1499" defaultMessage="Hide" />
+              :
+              <FormattedMessage id="Orders151" defaultMessage="my Orders" />}
           </Button>
           <Button gray styleName="button" onClick={this.createOffer}>
-            <FormattedMessage id="Orders128" defaultMessage="Create offer" />
+            <FormattedMessage id="orders128" defaultMessage="Create offer" />
           </Button>
+          {
+            (isWidget) && (
+              <Button green styleName="button" onClick={this.handleWalletPush} >
+                <FormattedMessage id="OrdersWidgetModeShowWallet" defaultMessage="Wallet" />
+              </Button>
+            )
+          }
         </div>
         {
           isVisible && <MyOrders
@@ -138,67 +205,62 @@ export default class Orders extends Component {
           />
         }
         <h3 styleName="ordersHeading">
-          <FormattedMessage id="orders143" defaultMessage="BUY " />
-          {buyCurrency}
-          <FormattedMessage id="orders145" defaultMessage=" HERE" />
+          <FormattedMessage id="orders156" defaultMessage="BUY {buyCurrency} HERE" values={{ buyCurrency: `${buyCurrency}` }} />
         </h3>
         <p>
-          <FormattedMessage id="orders148" defaultMessage=" orders of those who " />
-          <i>
-            <FormattedMessage id="orders150" defaultMessage=" sell " />
-          </i>
-          {buyCurrency}
-          <FormattedMessage id="orders153" defaultMessage=" to you " />
+          <FormattedMessage
+            id="orders159"
+            defaultMessage={`orders of those who {sell} {buyCurrency} to you`}
+            values={{
+              sell: <i><FormattedMessage id="orders150" defaultMessage="sell" /></i>,
+              buyCurrency: `${buyCurrency}`,
+            }} />
         </p>
         <Table
           id="table_exchange"
           className={tableStyles.exchange}
           titles={titles}
           rows={sellOrders}
-          rowRender={(row, index) => (
-            isMobile &&  <RowMobile
-              key={index}
+          rowRender={(row) => (
+            <Row
+              key={row.id}
               orderId={orderId}
               row={row}
-            /> || <Row
-              key={index}
-              orderId={orderId}
-              row={row}
+              decline={decline}
+              removeOrder={this.removeOrder}
             />
           )}
-          isLoading={!isOnline}
+          isLoading={sellOrders.length === 0 && !isIpfsLoaded}
         />
         <h3 styleName="ordersHeading">
-          <FormattedMessage id="orders174" defaultMessage="SELL " />
-          {buyCurrency}
-          <FormattedMessage id="orders176" defaultMessage=" HERE" />
+          <FormattedMessage id="orders224" defaultMessage={`SELL {buyCurrency} HERE`} values={{ buyCurrency: `${buyCurrency}` }} />
         </h3>
         <p>
-          <FormattedMessage id="orders179" defaultMessage=" orders that " />
-          <i>
-            <FormattedMessage id="orders181" defaultMessage=" buy " />
-          </i>
-          {buyCurrency}
-          <FormattedMessage id="orders184" defaultMessage=" from you " />
+          <FormattedMessage
+            id="orders186"
+            defaultMessage={`orders of those who {buy} {buyCurrency} from you`}
+            values={{
+              buy: <i><FormattedMessage id="orders189" defaultMessage="buy" /></i>,
+              buyCurrency: `${buyCurrency}`,
+            }} />
         </p>
         <Table
           id="table_exchange"
           className={tableStyles.exchange}
           titles={titles}
           rows={buyOrders}
-          rowRender={(row, index) => (
-            isMobile &&  <RowMobile
-              key={index}
+          rowRender={(row) => (
+            <Row
+              key={row.id}
               orderId={orderId}
               row={row}
-            /> || <Row
-              key={index}
-              orderId={orderId}
-              row={row}
+              decline={decline}
+              removeOrder={this.removeOrder}
             />
           )}
-          isLoading={!isOnline}
+          isLoading={buyOrders.length === 0 && !isIpfsLoaded}
         />
+        {seoPage && seoPage.footer && <div>{seoPage.footer}</div>}
       </Fragment>
     )
   }

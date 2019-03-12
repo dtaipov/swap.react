@@ -1,5 +1,5 @@
-import abi from 'human-standard-token-abi'
-import { request } from 'helpers'
+import ERC20_ABI from 'human-standard-token-abi'
+import helpers, { request, constants } from 'helpers'
 import { getState } from 'redux/core'
 import actions from 'redux/actions'
 import web3 from 'helpers/web3'
@@ -7,8 +7,6 @@ import reducers from 'redux/core/reducers'
 import config from 'app-config'
 import { BigNumber } from 'bignumber.js'
 
-
-BigNumber.config({ RANGE: [-1e+9, 1e+9], POW_PRECISION: 0  })
 
 const login = (privateKey, contractAddress, nameContract, decimals, fullName) => {
   let data
@@ -52,26 +50,26 @@ const getBalance = async (currency) => {
   if (currency === undefined) {
     return
   }
-
   const { address, contractAddress, decimals, name  } = tokensData[currency.toLowerCase()]
-
-  const ERC20 = new web3.eth.Contract(abi, contractAddress)
-
-  const result = await ERC20.methods.balanceOf(address).call()
-  console.log('result get balance', result)
-  let amount = new BigNumber(String(result)).dividedBy(new BigNumber(String(10)).pow(decimals)).toNumber()
-
-  reducers.user.setTokenBalance({ name, amount })
-  return amount
+  const ERC20 = new web3.eth.Contract(ERC20_ABI, contractAddress)
+  try {
+    const result = await ERC20.methods.balanceOf(address).call()
+    console.log('result get balance', result)
+    let amount = new BigNumber(String(result)).dividedBy(new BigNumber(String(10)).pow(decimals)).toString()
+    reducers.user.setTokenBalance({ name, amount })
+    return amount
+  } catch (e) {
+    reducers.user.setTokenBalanceError({ name })
+  }
 }
 
 
 const fetchBalance = async (address, contractAddress, decimals) => {
 
-  const ERC20 = new web3.eth.Contract(abi, contractAddress)
+  const ERC20 = new web3.eth.Contract(ERC20_ABI, contractAddress)
   const result = await ERC20.methods.balanceOf(address).call()
 
-  const amount = new BigNumber(String(result)).dividedBy(new BigNumber(String(10)).pow(decimals)).toNumber()
+  const amount = new BigNumber(String(result)).dividedBy(new BigNumber(String(10)).pow(decimals)).toString()
   return amount
 }
 
@@ -88,7 +86,7 @@ const getTransaction = (currency) =>
     console.log('currency', address, contractAddress)
 
     const url = [
-      `https://api-rinkeby.etherscan.io/api?module=account&action=tokentx`,
+      `${config.api.etherscan}?module=account&action=tokentx`,
       `&contractaddress=${contractAddress}`,
       `&address=${address}`,
       `&startblock=0&endblock=99999999`,
@@ -116,24 +114,68 @@ const getTransaction = (currency) =>
       })
   })
 
-
-const send = (contractAddress, to, amount, decimals) => {
-  const { user: { ethData: { address } } } = getState()
-
-  const options = {
-    from: address,
-    gas: 1e5,
-    gasPrice: 21e9,
+const withToken = (name) => {
+  if (!name) {
+    throw new Error('send: name is undefined')
   }
 
-  const tokenContract = new web3.eth.Contract(abi, contractAddress, options)
-  const newAmount = new BigNumber(String(amount)).times(new BigNumber(10).pow(decimals)).integerValue()
+  name = name.toLowerCase()
+
+  const { user: { tokensData: { [name]: { address } } } } = getState()
+  const { [name]: { address: contractAddress, decimals } } = config.erc20
+
+  const tokenContract = new web3.eth.Contract(ERC20_ABI, contractAddress, { from: address })
+
+  const toWei = amount => BigNumber(amount).times(BigNumber(10).pow(decimals)).integerValue()
+  const fromWei = wei => BigNumber(wei).div(BigNumber(10).pow(decimals))
+
+  return { tokenContract, decimals, toWei, fromWei }
+}
+
+const fetchFees = async ({ gasPrice, gasLimit, speed } = {}) => {
+  gasPrice = gasPrice || await helpers.eth.estimateGasPrice({ speed })
+  gasLimit = gasLimit || constants.defaultFeeRates.ethToken.limit.send
+
+  return {
+    gas: gasLimit,
+    gasPrice,
+  }
+}
+
+const sendTransaction = ({ contract, method }, { args, params = {} } = {}, callback) =>
+  new Promise(async (resolve, reject) => {
+    const receipt = await contract.methods[method](...args).send(params)
+      .on('transactionHash', (hash) => {
+        // eslint-disable-next-line
+        callback && callback(hash)
+      })
+      .on('error', (err) => {
+        reject(err)
+      })
+
+    resolve(receipt)
+  })
+
+const send = async ({ name, to, amount, ...feeConfig } = {}) => {
+  const { tokenContract, toWei } = withToken(name)
+  const params = await fetchFees({ ...feeConfig })
+
+  const newAmount = toWei(amount)
+  const callMethod = { contract: tokenContract, method: 'transfer' }
+
+  // return sendTransaction(
+  //   { contract: tokenContract, method: 'transfer' },
+  //   { args: [ to, newAmount ], params },
+  //   (hash) => {
+  //     const txId = `${config.link.etherscan}/tx/${hash}`
+  //     actions.loader.show(true, { txId })
+  //   })
 
   return new Promise(async (resolve, reject) => {
-    const receipt = await tokenContract.methods.transfer(to, newAmount).send()
+    const receipt = await tokenContract.methods.transfer(to, newAmount).send(params)
       .on('transactionHash', (hash) => {
         const txId = `${config.link.etherscan}/tx/${hash}`
-        actions.loader.show(true, true, txId)
+        actions.loader.show(true, { txId })
       })
       .on('error', (err) => {
         reject(err)
@@ -143,63 +185,43 @@ const send = (contractAddress, to, amount, decimals) => {
   })
 }
 
-const approve = (name, amount) => {
-  const { user: { tokensData } } = getState()
-  const { address, contractAddress, decimals } = tokensData[name.toLowerCase()]
+const approve = async ({ name, to, amount, ...feeConfig } = {}) => {
+  const { tokenContract, toWei } = withToken(name)
+  const params = await fetchFees({ ...feeConfig })
 
+  const newAmount = toWei(amount)
 
-  const newAmount = new BigNumber(String(amount)).times(new BigNumber(10).pow(decimals)).integerValue()
-  const ERC20     = new web3.eth.Contract(abi, contractAddress)
-
-  return new Promise(async (resolve, reject) => {
-    try {
-      const result = await ERC20.methods.approve(config.token.contract, newAmount).send({
-        from: address,
-        gas: 1e5,
-        gasPrice: 21e9,
-      })
-        .on('transactionHash', (hash) => {
-          const txId = `${config.link.etherscan}/tx/${hash}`
-          actions.loader.show(true, true, txId)
-        })
-        .on('error', err => {
-          reject(err)
-        })
-
-      resolve(result)
-    }
-    catch (err) {
-      reject(err)
-    }
-  })
-    .then(() => {
-      reducers.user.setTokenApprove({ name: name.toLowerCase(), approve: true  })
-    })
+  return sendTransaction(
+    { contract: tokenContract, method: 'approve' },
+    { args: [ to, newAmount ], params })
 }
 
-const allowance = (contractAddress, name) => {
-  const { user: { ethData: { address } } } = getState()
-  const ERC20     = new web3.eth.Contract(abi, contractAddress)
+const setAllowanceForToken = async ({ name, to, targetAllowance, ...config }) => {
+  const { tokenContract, toWei } = withToken(name)
 
-  return new Promise(async (resolve, reject) => {
-    let allowance = await ERC20.methods.allowance(address, config.swapContract.erc20).call()
+  name = name.toLowerCase()
 
-    console.log('💸 allowance:', allowance)
+  const { user: { tokensData: { [name]: { address } } } } = getState()
 
-    reducers.user.setTokenApprove({ name, approve: allowance > 0 })
+  const allowance = await tokenContract.methods.allowance(address, to).call()
 
-    resolve(allowance)
-  })
+  // if there is already enough allowance, skip
+  if (toWei(targetAllowance).isLessThanOrEqualTo(allowance)) {
+    return Promise.resolve()
+  }
+  // but if not, set allowance to 1 billion (or requested target allowance, if it's bigger than 1 billion)
 
+  const newTargetAllowance = BigNumber.max(1e9, targetAllowance)
+
+  return approve({ name, to, amount: newTargetAllowance, ...config })
 }
-
 
 export default {
   login,
   getBalance,
   getTransaction,
   send,
-  fetchBalance,
   approve,
-  allowance,
+  setAllowanceForToken,
+  fetchBalance,
 }

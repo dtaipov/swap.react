@@ -8,17 +8,21 @@ import { links, constants } from 'helpers'
 
 import actions from 'redux/actions'
 import { connect } from 'redaction'
+import { isMobile } from 'react-device-detect'
 
 import Center from 'components/layout/Center/Center'
 import PageHeadline from 'components/PageHeadline/PageHeadline'
 import SubTitle from 'components/PageHeadline/SubTitle/SubTitle'
 import FaqExpandableItem from 'components/FaqExpandableItem/FaqExpandableItem'
 import CurrencyDirectionChooser from 'components/CurrencyDirectionChooser/CurrencyDirectionChooser'
-import { FormattedMessage } from 'react-intl'
+import { FormattedMessage, injectIntl } from 'react-intl'
+import { localisedUrl } from 'helpers/locale'
 
 import Orders from './Orders/Orders'
 
+import config from 'app-config'
 
+@injectIntl
 @connect(({
   core: { filter },
   currencies: { items: currencies },
@@ -37,7 +41,7 @@ export default class Home extends Component {
     faqFetching: PropTypes.bool,
   }
 
-  constructor({ initialData, match: { params: { buy, sell } } }) {
+  constructor({ initialData, match: { params: { buy, sell } }, intl: { locale } }) {
     super()
 
     const { buyCurrency, sellCurrency } = initialData || {}
@@ -46,6 +50,8 @@ export default class Home extends Component {
       buyCurrency: buy || buyCurrency || 'swap',
       sellCurrency: sell || sellCurrency || 'btc',
       invalidPair: false,
+      isShow: false,
+      exchange: localisedUrl(locale, links.exchange),
     }
   }
 
@@ -82,7 +88,7 @@ export default class Home extends Component {
     }
 
     this.checkPair(value, buyCurrency)
-
+    actions.pairs.selectPair(sellCurrency)
     this.setState({
       buyCurrency,
       sellCurrency: value,
@@ -125,19 +131,25 @@ export default class Home extends Component {
   handleShowOrders = () => {
     const { history, filter } = this.props
 
-    this.setState(() => ({ isVisible: false }))
+    this.setState(() => ({
+      isVisible: false,
+      isShow: true,
+    }))
     history.replace(filter.toLowerCase())
   }
 
   render() {
-    const { match: { params: { orderId } }, history: { location: { pathname } }, currencies, history, filter } = this.props
-    const { buyCurrency, sellCurrency, invalidPair } = this.state
+    const { match: { params: { orderId } }, history: { location: { pathname } }, currencies, history, filter, intl: { locale } } = this.props
+    const { buyCurrency, sellCurrency, invalidPair, isShow, exchange } = this.state
+
+    const sectionContainerStyleName = isMobile ? 'sectionContainerMobile' : 'sectionContainer'
+    const isWidgetBuild = config && config.isWidget
 
     return (
-      <section style={{ position: 'relative', width: '100%' }}>
+      <section styleName={isWidgetBuild ? `${sectionContainerStyleName} ${sectionContainerStyleName}_widget` : sectionContainerStyleName}>
         <PageHeadline>
           {
-            pathname === links.exchange ? (
+            pathname === exchange ? (
               <Fragment>
                 <CurrencyDirectionChooser
                   handleSellCurrencySelect={this.handleSellCurrencySelect}
@@ -150,14 +162,14 @@ export default class Home extends Component {
                 />
                 <div styleName="videoContainer">
                   <Center relative centerVertically={false}>
-                    <FormattedMessage id="Home153" defaultMessage="What is atomic swap?">
-                      {message => <SubTitle>{message}</SubTitle>}
-                    </FormattedMessage>
+                    <SubTitle>
+                      <FormattedMessage id="Home153" defaultMessage="What is atomic swap?" />
+                    </SubTitle>
                   </Center>
 
                   <div styleName="videoFaqContainer">
                     <iframe
-                      title="What is atomic swap?"
+                      title="What1 is atomic swap?"
                       width="700"
                       height="480"
                       src="https://www.youtube.com/embed/Jhrb7xOT_7s"

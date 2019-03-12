@@ -1,10 +1,12 @@
-import { request, constants, api } from 'helpers'
+import helpers, { request, constants, api } from 'helpers'
 import { getState } from 'redux/core'
-import  actions from 'redux/actions'
+import actions from 'redux/actions'
 import web3 from 'helpers/web3'
 import reducers from 'redux/core/reducers'
 import config from 'app-config'
 import referral from './referral'
+import { Keychain, web3Override } from 'keychain.js'
+import { pubToAddress } from 'ethereumjs-util';
 
 
 const login = (privateKey) => {
@@ -16,6 +18,7 @@ const login = (privateKey) => {
   else {
     console.info('Created account Ethereum ...')
     data = web3.eth.accounts.create()
+    localStorage.setItem(constants.localStorage.keychainActivated, false) // for deactivation of KeyChain
   }
 
   localStorage.setItem(constants.privateKeyNames.eth, data.privateKey)
@@ -31,19 +34,64 @@ const login = (privateKey) => {
   return data.privateKey
 }
 
+const loginWithKeychain = async () => {
+  const web3OverrideFunctions = web3Override(web3)
+  web3.eth.accounts.sign = web3OverrideFunctions.sign
+  web3.eth.accounts.signTransaction = web3OverrideFunctions.signTransaction
+
+  const keychain = await Keychain.create()
+  const selectKeyResult = await keychain.selectKey()
+  const selectedKey = selectKeyResult.result
+  const data = { privateKey: selectedKey, address: `0x${pubToAddress('0x' + selectedKey).toString('hex')}` }
+
+  localStorage.setItem(constants.privateKeyNames.eth, data.privateKey)
+  localStorage.setItem(constants.localStorage.keychainActivated, true)
+
+  reducers.user.setAuthData({ name: 'ethData', data })
+
+  window.getEthAddress = () => data.address
+
+  console.info('Logged in with Ethereum', data)
+
+  await getBalance()
+  await getReputation()
+  return selectedKey;
+}
+
 const getBalance = () => {
   const { user: { ethData: { address } } } = getState()
   return web3.eth.getBalance(address)
     .then(result => {
-      const amount = Number(web3.utils.fromWei(result))
+      const amount = web3.utils.fromWei(result)
 
       reducers.user.setBalance({ name: 'ethData', amount })
       return amount
     })
     .catch((e) => {
-      console.log('Web3 doesn\'t work please again later ',  e.error)
+      reducers.user.setBalanceError({ name: 'ethData' })
     })
 }
+
+const getReputation = () =>
+  new Promise(async (resolve, reject) => {
+    const { user: { ethData: { address, privateKey } } } = getState()
+    const addressOwnerSignature = web3.eth.accounts.sign(address, privateKey)
+
+    request.post(`${api.getApiServer('swapsExplorer')}/reputation`, {
+      json: true,
+      body: {
+        address,
+        addressOwnerSignature,
+      },
+    }).then((response) => {
+      const { reputation, reputationOracleSignature } = response
+
+      reducers.user.setReputation({ name: 'ethData', reputation, reputationOracleSignature })
+      resolve(reputation)
+    }).catch((error) => {
+      reject(error)
+    })
+  })
 
 const fetchBalance = (address) =>
   web3.eth.getBalance(address)
@@ -51,7 +99,6 @@ const fetchBalance = (address) =>
     .catch((e) => {
       console.log('Web3 doesn\'t work please again later ', e.error)
     })
-
 
 const getTransaction = () =>
   new Promise((resolve) => {
@@ -80,27 +127,27 @@ const getTransaction = () =>
       })
   })
 
-const send = (from, to, amount) =>
+const send = ({ to, amount, gasPrice, gasLimit, speed } = {}) =>
   new Promise(async (resolve, reject) => {
     const { user: { ethData: { privateKey } } } = getState()
 
+    gasPrice = gasPrice || await helpers.eth.estimateGasPrice({ speed })
+    gasLimit = gasLimit || constants.defaultFeeRates.eth.limit.send
+
     const params = {
       to: String(to).trim(),
-      gasPrice: '20000000000',
-      gas: '21000',
+      gasPrice,
+      gas: gasLimit,
       value: web3.utils.toWei(String(amount)),
     }
-    let txRaw
 
-    await web3.eth.accounts.signTransaction(params, privateKey)
-      .then(result => {
-        txRaw = web3.eth.sendSignedTransaction(result.rawTransaction)
+    const result = await web3.eth.accounts.signTransaction(params, privateKey)
+    const receipt = web3.eth.sendSignedTransaction(result.rawTransaction)
+      .on('transactionHash', (hash) => {
+        const txId = `${config.link.etherscan}/tx/${hash}`
+        console.log('tx', txId)
+        actions.loader.show(true, { txId })
       })
-
-    const receipt = await txRaw.on('transactionHash', (hash) => {
-      const txId = `${config.link.etherscan}/tx/${hash}`
-      actions.loader.show(true, true, txId)
-    })
       .on('error', (err) => {
         reject(err)
       })
@@ -108,11 +155,12 @@ const send = (from, to, amount) =>
     resolve(receipt)
   })
 
-
 export default {
   send,
   login,
+  loginWithKeychain,
   getBalance,
   fetchBalance,
   getTransaction,
+  getReputation,
 }

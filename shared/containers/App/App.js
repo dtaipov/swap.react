@@ -23,7 +23,11 @@ import ModalConductor from 'components/modal/ModalConductor/ModalConductor'
 import WidthContainer from 'components/layout/WidthContainer/WidthContainer'
 import NotificationConductor from 'components/notification/NotificationConductor/NotificationConductor'
 import Seo from 'components/Seo/Seo'
-import UserTooltip from 'components/Header/User/UserTooltip/UserTooltip'
+
+import config from 'app-config'
+
+
+const memdown = require('memdown')
 
 
 const userLanguage = (navigator.userLanguage || navigator.language || 'en-gb').split('-')[0]
@@ -36,7 +40,7 @@ moment.locale(userLanguage)
   btcAddress: 'user.btcData.address',
   tokenAddress: 'user.tokensData.swap.address',
 })
-@CSSModules(styles)
+@CSSModules(styles, { allowMultiple: true })
 export default class App extends React.Component {
 
   static propTypes = {
@@ -56,31 +60,41 @@ export default class App extends React.Component {
   }
 
   componentWillMount() {
-    localStorage.setItem(constants.localStorage.activeTabId, Date.now())
-
-    if (localStorage.getItem(constants.localStorage.activeTabId)) {
-      localStorage.setItem(constants.localStorage.activeTabId, Date.now())
-    }
-
-    this.localStorageListener = localStorage.subscribe(constants.localStorage.activeTabId, (newValue) => {
-      if (newValue !== localStorage.getItem(constants.localStorage.activeTabId)) {
+    const myId = Date.now().toString()
+    localStorage.setItem(constants.localStorage.enter, myId)
+    const enterSub = localStorage.subscribe(constants.localStorage.enter, () => {
+      localStorage.setItem(constants.localStorage.reject, myId)
+    })
+    const rejectSub = localStorage.subscribe(constants.localStorage.reject, (id) => {
+      if (id && id !== myId) {
         this.setState({ multiTabs: true })
+        localStorage.unsubscribe(rejectSub)
+        localStorage.unsubscribe(enterSub)
+        localStorage.removeItem(constants.localStorage.reject)
       }
     })
 
     if (!localStorage.getItem(constants.localStorage.demoMoneyReceived)) {
       actions.user.getDemoMoney()
     }
-  }
 
-  componentWillUnmount() {
-    localStorage.unsubscribe(this.localStorageListener)
+    actions.firebase.initialize()
   }
 
   componentDidMount() {
+    window.actions = actions
+
     window.onerror = (error) => {
-      actions.notifications.show(constants.notifications.ErrorNotification, { error })
-      actions.analytics.errorEvent(error)
+      // actions.analytics.errorEvent(error)
+    }
+
+    try {
+      const db = indexedDB.open('test')
+      db.onerror = () => {
+        window.leveldown = memdown
+      }
+    } catch (e) {
+      window.leveldown = memdown
     }
 
     setTimeout(() => {
@@ -88,12 +102,23 @@ export default class App extends React.Component {
       createSwapApp()
       this.setState({ fetching: true })
     }, 1000)
+    window.prerenderReady = true
   }
 
   render() {
     const { fetching, multiTabs, error } = this.state
     const { children, ethAddress, btcAddress, tokenAddress, history /* eosAddress */ } = this.props
-    const isFetching = !ethAddress || !btcAddress || !tokenAddress || !fetching
+    const isFetching = !ethAddress || !btcAddress || (!tokenAddress && config && !config.isWidget) || !fetching
+
+    const isWidget = history.location.pathname.includes('/exchange') && history.location.hash === '#widget'
+    const isCalledFromIframe = window.location !== window.parent.location
+    const isWidgetBuild = config && config.isWidget
+
+    if (isWidgetBuild && localStorage.getItem(constants.localStorage.didWidgetsDataSend) !== 'true') {
+      actions.firebase.submitUserDataWidget('usersData')
+      localStorage.setItem(constants.localStorage.didWidgetsDataSend, true)
+    }
+
     if (multiTabs) {
       return <PreventMultiTabs />
     }
@@ -102,23 +127,32 @@ export default class App extends React.Component {
       return <Loader showTips />
     }
 
-    const mainContent = (
-      <Fragment>
-        <Seo location={history.location} />
-        { isMobile && <UserTooltip /> }
-        <Header />
-        <WidthContainer styleName="main">
-          <main>
-            {children}
-          </main>
-        </WidthContainer>
-        <Core />
-        { !isMobile && <Footer /> }
-        <RequestLoader />
-        <ModalConductor />
-        <NotificationConductor />
-      </Fragment>
-    )
+    const mainContent = (isWidget || isCalledFromIframe) && !isWidgetBuild
+      ? (
+        <Fragment>
+          {children}
+          <Core />
+          <RequestLoader />
+          <ModalConductor />
+          <NotificationConductor />
+        </Fragment>
+      )
+      : (
+        <Fragment>
+          <Seo location={history.location} />
+          <Header />
+          <WidthContainer styleName={isWidgetBuild ? 'main main_widget' : 'main'}>
+            <main>
+              {children}
+            </main>
+          </WidthContainer>
+          <Core />
+          { !isMobile && <Footer /> }
+          <RequestLoader />
+          <ModalConductor />
+          <NotificationConductor />
+        </Fragment>
+      )
 
     return (
       process.env.LOCAL === 'local' ? (

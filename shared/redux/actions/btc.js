@@ -6,6 +6,7 @@ import bitcoinMessage from 'bitcoinjs-message'
 import { getState } from 'redux/core'
 import reducers from 'redux/core/reducers'
 import { btc, request, constants, api } from 'helpers'
+import { Keychain } from 'keychain.js'
 
 
 const login = (privateKey) => {
@@ -52,7 +53,10 @@ const getBalance = () => {
       console.log('BTC unconfirmedBalance Balance: ', unconfirmedBalance)
       reducers.user.setBalance({ name: 'btcData', amount: balance, unconfirmedBalance })
       return balance
-    }, () => Promise.reject())
+    })
+    .catch((e) => {
+      reducers.user.setBalanceError({ name: 'btcData' })
+    })
 }
 
 const fetchBalance = (address) =>
@@ -61,6 +65,17 @@ const fetchBalance = (address) =>
 
 const fetchTx = (hash) =>
   request.get(`${api.getApiServer('bitpay')}/tx/${hash}`)
+    .then(({ fees, ...rest }) => ({
+      fees: BigNumber(fees).multipliedBy(1e8),
+      ...rest,
+    }))
+
+const fetchTxInfo = (hash) =>
+  fetchTx(hash)
+    .then(({ vin, ...rest }) => ({
+      senderAddress: vin ? vin[0].addr : null,
+      ...rest,
+    }))
 
 const getTransaction = () =>
   new Promise((resolve) => {
@@ -70,14 +85,30 @@ const getTransaction = () =>
 
     return request.get(url)
       .then((res) => {
-        const transactions = res.txs.map((item) => ({
-          type: 'btc',
-          hash: item.txid,
-          confirmations: item.confirmations,
-          value: item.vout.filter(item => item.scriptPubKey.addresses[0] === address)[0].value,
-          date: item.time * 1000,
-          direction: address === item.vout[0].scriptPubKey.addresses[0] ? 'in' : 'out',
-        }))
+        const transactions = res.txs.map((item) => {
+          const direction = item.vin[0].addr !== address ? 'in' : 'out'
+          const isSelf = direction === 'out'
+            && item.vout.filter((item) =>
+              item.scriptPubKey.addresses[0] === address
+            ).length === item.vout.length
+
+          return ({
+            type: 'btc',
+            hash: item.txid,
+            confirmations: item.confirmations,
+            value: isSelf
+              ? item.fees
+              : item.vout.filter((item) => {
+                const currentAddress = item.scriptPubKey.addresses[0]
+
+                return direction === 'in'
+                  ? (currentAddress === address)
+                  : (currentAddress !== address)
+              })[0].value,
+            date: item.time * 1000,
+            direction: isSelf ? 'self' : direction,
+          })
+        })
         resolve(transactions)
       })
       .catch(() => {
@@ -85,45 +116,11 @@ const getTransaction = () =>
       })
   })
 
-const createScript = (data) => {
-  const { secretHash, ownerPublicKey, recipientPublicKey, lockTime } = data
-
-  const script = bitcoin.script.compile([
-
-    bitcoin.opcodes.OP_RIPEMD160,
-    Buffer.from(secretHash, 'hex'),
-    bitcoin.opcodes.OP_EQUALVERIFY,
-
-    Buffer.from(recipientPublicKey, 'hex'),
-    bitcoin.opcodes.OP_EQUAL,
-    bitcoin.opcodes.OP_IF,
-
-    Buffer.from(recipientPublicKey, 'hex'),
-    bitcoin.opcodes.OP_CHECKSIG,
-
-    bitcoin.opcodes.OP_ELSE,
-
-    bitcoin.script.number.encode(lockTime),
-    bitcoin.opcodes.OP_CHECKLOCKTIMEVERIFY,
-    bitcoin.opcodes.OP_DROP,
-    Buffer.from(ownerPublicKey, 'hex'),
-    bitcoin.opcodes.OP_CHECKSIG,
-
-    bitcoin.opcodes.OP_ENDIF,
-  ])
-
-  const scriptPubKey  = bitcoin.script.scriptHash.output.encode(bitcoin.crypto.hash160(script))
-  const scriptAddress = bitcoin.address.fromOutputScript(scriptPubKey, { network: btc.network })
-
-  return {
-    scriptAddress,
-  }
-}
-
-
-const send = async (from, to, amount, feeValue = 15000) => {
+const send = async ({ from, to, amount, feeValue, speed } = {}) => {
   const { user: { btcData: { privateKey } } } = getState()
   const keyPair = bitcoin.ECPair.fromWIF(privateKey, btc.network)
+
+  feeValue = feeValue || await btc.estimateFeeValue({ inSatoshis: true, speed })
 
   const tx            = new bitcoin.TransactionBuilder(btc.network)
   const unspents      = await fetchUnspents(from)
@@ -139,17 +136,32 @@ const send = async (from, to, amount, feeValue = 15000) => {
     tx.addOutput(from, skipValue)
   }
 
-  tx.inputs.forEach((input, index) => {
-    tx.sign(index, keyPair)
-  })
-
-  const txRaw = tx.buildIncomplete()
+  const keychainActivated = localStorage.getItem(constants.localStorage.keychainActivated) === 'true'
+  const txRaw = keychainActivated ? await signAndBuildKeychain(tx, unspents) : signAndBuild(tx, keyPair)
 
   broadcastTx(txRaw.toHex())
 
   return txRaw
 }
 
+const signAndBuild = (transactionBuilder, keyPair) => {
+  transactionBuilder.inputs.forEach((input, index) => {
+    transactionBuilder.sign(index, keyPair)
+  })
+  return transactionBuilder.buildIncomplete()
+}
+
+const signAndBuildKeychain = async (transactionBuilder, unspents) => {
+  const txRaw = transactionBuilder.buildIncomplete()
+  unspents.forEach(({ scriptPubKey }, index) => txRaw.ins[index].script = Buffer.from(scriptPubKey, 'hex'))
+  const keychain = await Keychain.create()
+  const rawHex = await keychain.signHex(
+    txRaw.toHex(),
+    '08d6770d8219923fe25a4d6aeb2c171253d5de3bc225f09dbfb2cb93ed837be1a80fdd3af5046b8f1f5412e5b321dcc3c25be9f4dd285250421ea55071794277',
+    'bitcoin'
+  )
+  return { ...txRaw, toHex: () => rawHex.result }
+}
 
 const fetchUnspents = (address) =>
   request.get(`${api.getApiServer('bitpay')}/addr/${address}/utxo`)
@@ -170,15 +182,37 @@ const signMessage = (message, encodedPrivateKey) => {
   return signature.toString('base64')
 }
 
+const getReputation = () =>
+  new Promise(async (resolve, reject) => {
+    const { user: { btcData: { address, privateKey } } } = getState()
+    const addressOwnerSignature = signMessage(address, privateKey)
+
+    request.post(`${api.getApiServer('swapsExplorer')}/reputation`, {
+      json: true,
+      body: {
+        address,
+        addressOwnerSignature,
+      },
+    }).then((response) => {
+      const { reputation, reputationOracleSignature } = response
+
+      reducers.user.setReputation({ name: 'btcData', reputation, reputationOracleSignature })
+      resolve(reputation)
+    }).catch((error) => {
+      reject(error)
+    })
+  })
+
 export default {
   login,
   getBalance,
   getTransaction,
   send,
   fetchUnspents,
-  createScript,
   broadcastTx,
   fetchTx,
+  fetchTxInfo,
   fetchBalance,
   signMessage,
+  getReputation,
 }

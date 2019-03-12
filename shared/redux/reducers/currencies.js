@@ -40,6 +40,60 @@ const initialState = {
         fullTitle: key,
       }))),
   ],
+  partialItems: [
+    {
+      name: 'ETH',
+      title: 'ETH',
+      icon: 'eth',
+      value: 'eth',
+      fullTitle: 'ethereum',
+    },
+    {
+      name: 'BTC',
+      title: 'BTC',
+      icon: 'btc',
+      value: 'btc',
+      fullTitle: 'bitcoin',
+    },
+    {
+      name: 'SWAP',
+      title: 'SWAP',
+      icon: 'swap',
+      value: 'swap',
+      fullTitle: 'swap',
+    },
+  ],
+  addSelectedItems: [],
+  addPartialItems: [],
+}
+
+if (config.isWidget) {
+  initialState.items = [
+    {
+      name: 'BTC',
+      title: 'BTC',
+      icon: 'btc',
+      value: 'btc',
+      fullTitle: 'bitcoin',
+    },
+    {
+      name: config.erc20token.toUpperCase(),
+      title: config.erc20token.toUpperCase(),
+      icon: config.erc20token,
+      value: config.erc20token,
+      fullTitle: config.erc20[config.erc20token].fullName,
+    },
+  ]
+
+  initialState.addSelectedItems = [
+    {
+      name: config.erc20token.toUpperCase(),
+      title: config.erc20token.toUpperCase(),
+      icon: config.erc20token,
+      value: config.erc20token,
+      fullTitle: config.erc20[config.erc20token].fullName,
+    },
+  ]
 }
 
 // eslint-disable-next-line
@@ -51,7 +105,30 @@ process.env.MAINNET && initialState.items.unshift({
   fullTitle: 'USD Tether',
 })
 
+const addSelectedItems = (state, payload) => ({
+  ...state,
+  addSelectedItems: payload,
+})
+
+const addPartialItems = (state, payload) => ({
+  ...state,
+  addPartialItems: payload,
+})
+
+const updatePartialItems = (state, payload) => ({
+  ...state,
+  partialItems: payload,
+})
+
+const deletedPartialCurrency = (state, payload) => ({
+  ...state,
+  partialItems: state.partialItems.filter(item => item.name !== payload),
+})
 
 export {
   initialState,
+  addSelectedItems,
+  addPartialItems,
+  updatePartialItems,
+  deletedPartialCurrency,
 }

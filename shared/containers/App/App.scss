@@ -2,9 +2,15 @@
   position: relative;
   z-index: 1;
   padding-bottom: 55px;
-
+  min-height: calc(100vh - 125px);
   main {
     margin-top: 88px;
+  }
+
+  &_widget {
+    main {
+      margin-top: 0;
+    }
   }
 }
 
@@ -20,5 +26,10 @@
       margin-bottom: 80px;
     }
 
+    &_widget {
+      main {
+        margin-top: 20px;
+      }
+    }
 	}
 }

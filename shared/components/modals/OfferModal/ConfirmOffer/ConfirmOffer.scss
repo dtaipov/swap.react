@@ -6,6 +6,9 @@
 
 .buttonsInRow {
   margin-top: 50px;
+  .button:first-child {
+    margin-right: 20px;
+  }
 }
 
 .button {
@@ -15,4 +18,15 @@
 
 .link {
   margin-left: 20px;
+}
+
+@include media-mobile {
+	.buttonsInRow {
+	  > div {
+	  	flex-direction: row
+	  }
+	}
+	.button {
+	  width: 160px;
+	}
 }

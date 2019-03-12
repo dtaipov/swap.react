@@ -3,6 +3,7 @@ import PropTypes from 'prop-types'
 
 import CSSModules from 'react-css-modules'
 import styles from './Timer.scss'
+import { FormattedMessage } from 'react-intl'
 
 
 @CSSModules(styles)
@@ -29,7 +30,6 @@ export default class Timer extends React.Component {
 
   componentWillMount() {
     const { lockTime } = this.state
-    console.log(lockTime)
 
     const dateNow = new Date().getTime()
     const timeLeft = lockTime - dateNow
@@ -44,7 +44,7 @@ export default class Timer extends React.Component {
     const newTimeLeft = timeLeft - 1000
 
     if (newTimeLeft <= 0) {
-      this.props.enabledButton()
+      this.props.enabledButton // eslint-disable-line
     }
     else {
       this.timer = setTimeout(this.tick, 1000)
@@ -61,12 +61,23 @@ export default class Timer extends React.Component {
     return (
       <div styleName="timer">
         {
-          min > 0 ? (
-            `${min} minute left for refund`
+          this.props.defaultMessage === false ? (
+            <span>{min}</span>
           ) : (
-            'refund ready'
+            min > 0 ? (
+              <span>
+                <FormattedMessage
+                  id="timer671"
+                  defaultMessage="minute left for refund"
+                  values={{ min: `${min}` }}
+                />
+              </span>
+            ) : (
+              <FormattedMessage id="timer68" defaultMessage="refund ready" />
+            )
           )
         }
+
       </div>
     )
   }
